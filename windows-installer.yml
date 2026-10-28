@@ -1,0 +1,42 @@
+name: Build Windows installer
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Install OCR engine
+        shell: powershell
+        run: |
+          choco install tesseract --yes --no-progress
+          $paths = @('C:\Program Files\Tesseract-OCR', 'C:\ProgramData\chocolatey\lib\tesseract\tools')
+          $ocr = $paths | Where-Object { Test-Path (Join-Path $_ 'tesseract.exe') } | Select-Object -First 1
+          if (-not $ocr) { throw 'Tesseract executable not found' }
+          New-Item -ItemType Directory -Force -Path bundled\tesseract | Out-Null
+          Copy-Item (Join-Path $ocr 'tesseract.exe') bundled\tesseract\
+          Copy-Item (Join-Path $ocr '*.dll') bundled\tesseract\ -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path bundled\tesseract\tessdata | Out-Null
+          Copy-Item (Join-Path $ocr 'tessdata\eng.traineddata') bundled\tesseract\tessdata\
+          $rus = Join-Path $ocr 'tessdata\rus.traineddata'
+          if (Test-Path $rus) { Copy-Item $rus bundled\tesseract\tessdata\ }
+      - name: Package app
+        run: pyinstaller --noconfirm --clean --windowed --name WarpathInventory --add-data "bundled/tesseract;tesseract" app.py
+      - name: Compile installer
+        shell: powershell
+        run: |
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) { choco install innosetup --yes --no-progress }
+          & $iscc installer.iss
+      - name: Upload EXE installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: WarpathInventorySetup
+          path: output/WarpathInventorySetup.exe
